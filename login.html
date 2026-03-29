@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login Page</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-image: url("bg.png");
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+
+        .login-container {
+            background-image: url("scroll.png"); 
+            background-size: contain; 
+            background-position: center;
+            background-repeat: no-repeat;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            width: 90%;
+            max-width: 650px;
+            min-height: 600px;
+            border-radius: 0;
+            box-shadow: none;
+            color: white; 
+            padding: 10px;
+        }
+
+        .login-container h2,
+        .signup-container h2 {
+            font-family: 'Cinzel', serif;
+            text-align: center;
+            margin-bottom: 15px;
+             color: #2B1B10;
+            font-size: 35px;
+        }
+
+        .input-group {
+            margin-bottom: 10px;
+            color: #3B2A1A;
+        }
+
+        .input-group label {
+            font-family: 'Lora', serif;
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+              color: #2B2B2B;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            color: #3B2A1A;
+            background-color: #fdf6e3; 
+            border: 2px solid #6B4F2A;
+            border-radius: 10px;
+            border: 1px solid #ccc;
+            font-size: 14px;
+            transition: 0.3s;
+            font-family: 'Lora', serif;
+        }
+
+        .input-group input:focus {
+            border-color: #4e73df;
+            outline: none;
+        }
+
+        .login-btn {
+            font-family: 'Lora', serif;
+            width: 100%;
+            padding: 10px;
+            background-color: #6B4F2A;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        .login-btn:hover {
+            background-color: #5A3F21;
+        }
+
+        .extra-links {
+            margin-top: 15px;
+            text-align: center;
+            font-size: 13px;
+            font-family: 'Lora', serif;
+            
+        }
+
+        .extra-links a {
+            text-decoration: none;
+           color: white;
+           font-family: 'Lora', serif;
+        }
+
+        .extra-links a:hover {
+            text-decoration: underline;
+        }
+        .extra-links p{
+            font-family: 'Lora', serif;
+            font-size: 13px;
+        }
+        .signup-container {
+            background-image: url("scroll.png"); 
+            background-size: contain; 
+            background-position: center;
+            background-repeat: no-repeat;
+            display: flex;          /* needed when showing */
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            width: 90%;
+            max-width: 650px;
+            min-height: 600px;
+            border-radius: 0;
+            box-shadow: none;
+            color: white; 
+            padding: 10px;
+        }
+        .error-message {
+            display: none;
+            text-align: center;
+            color:#8B1C1C;
+            font-family: 'Lora', serif; 
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px; 
+                }
+    </style>
+</head>
+<body>
+
+    <div class="login-container">
+        <h2>Login</h2>
+        <form action="#" method="POST">
+            
+            <div class="input-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" placeholder="Enter your email" required>
+            </div>
+
+            <div class="input-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Enter your password" required>
+            </div>
+                <div class="error-message"></div> 
+
+            <button type="submit" class="login-btn">Login</button>
+
+            <div class="extra-links">
+                <p>Don't have an account? <a href="#">Sign Up</a></p>
+            </div>
+
+        </form>
+    </div>
+    <div class="signup-container" style="display: none;">
+    <h2>Sign Up</h2>
+    <form action="#" method="POST">
+        <div class="input-group">
+            <label for="signup-name">Full Name</label>
+            <input type="text" id="signup-name" name="signup-name" placeholder="Enter your full name" required>
+        </div>
+        <div class="input-group">
+            <label for="signup-email">Email</label>
+            <input type="email" id="signup-email" name="signup-email" placeholder="Enter your email" required>
+        </div>
+        <div class="input-group">
+            <label for="signup-password">Password</label>
+            <input type="password" id="signup-password" name="signup-password" placeholder="Enter your password" required>
+        </div>
+            <div class="error-message"></div> 
+        <button type="submit" class="login-btn">Sign Up</button>
+        <div class="extra-links">
+            <p>Already have an account? <a href="#" id="back-to-login">Login</a></p>
+        </div>
+    </form>
+</div>
+
+<script>
+    const loginContainer = document.querySelector('.login-container');
+    const signupContainer = document.querySelector('.signup-container');
+
+   const signupLink = document.querySelector('.login-container .extra-links a[href="#"]');
+    const backToLoginLink = document.getElementById('back-to-login'); 
+
+    signupLink.addEventListener('click', function(e) {
+        e.preventDefault();
+        loginContainer.style.display = 'none';
+        signupContainer.style.display = 'flex';
+    });
+
+    backToLoginLink.addEventListener('click', function(e) {
+        e.preventDefault();
+        signupContainer.style.display = 'none';
+        loginContainer.style.display = 'flex';
+    });
+
+    const VALID_EMAIL = "nicole@gmail.com";
+    const VALID_PASSWORD = "12345";
+
+  
+    const loginForm = document.querySelector('.login-container form');
+    const loginError = loginForm.querySelector('.error-message');
+
+    loginForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value.trim();
+
+        if (!email || !password) {
+            loginError.textContent = "Please fill in all fields.";
+            loginError.style.display = "block";
+            return;
+        }
+
+        if (email === VALID_EMAIL && password === VALID_PASSWORD) {
+            loginError.style.display = "none";
+            window.location.href = "welcome.html";
+        } else {
+            loginError.textContent = "Incorrect email or password.";
+            loginError.style.display = "block";
+        }
+    });
+
+
+    const signupForm = document.querySelector('.signup-container form');
+    const signupError = signupForm.querySelector('.error-message');
+
+    signupForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const name = document.getElementById('signup-name').value.trim();
+        const email = document.getElementById('signup-email').value.trim();
+        const password = document.getElementById('signup-password').value.trim();
+
+        if (!name || !email || !password) {
+            signupError.textContent = "Please fill in all fields.";
+            signupError.style.display = "block";
+            return;
+        }
+
+        signupError.style.display = "none";
+        signupContainer.style.display = 'none';
+        loginContainer.style.display = 'flex';
+    });
+
+</script>
+
+</body>
+</html>
