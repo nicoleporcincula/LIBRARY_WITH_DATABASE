@@ -1,15 +1,20 @@
 <?php
 session_start();
+include 'db_connect.php'; 
 
-// Redirect to login if user not logged in
+//Redirect to login if user not logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.html");
     exit;
 }
+// Get all books
+$sql_books = "SELECT * FROM books";
+$result_books = $conn->query($sql_books);
 
-// Get user's full name safely
+//Get user's full name safely
 $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
