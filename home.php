@@ -7,6 +7,12 @@ if (!isset($_SESSION['user_id'])) {
     header("Location: login.html");
     exit;
 }
+
+// Get all members
+$sql_members = "SELECT m.*, mt.type_name 
+                FROM members m 
+                LEFT JOIN membership_types mt ON m.membership_type_id = mt.membership_type_id";
+$result_members = $conn->query($sql_members);
 // Get all books
 $sql_books = "SELECT * FROM books";
 $result_books = $conn->query($sql_books);
@@ -372,12 +378,12 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
                     <div class="card"><p class="card-label">Overdue</p><span class="card-value">0</span></div>
                 </div>
 
-                <div class="actions">
-                    <button onclick="toggleModal('addBookModal')">Add Book</button>
-                    <button onclick="toggleModal('addMemberModal')">Add Member</button>
-                    <button onclick="document.querySelector('[data-target=\'panel-borrow\']').click()">Borrow Book</button>
-                    <button onclick="document.querySelector('[data-target=\'panel-borrow\']').click()">Return Book</button>
-                </div>
+<div class="actions">
+    <button onclick="toggleModal('addBookModal')">Add Book</button>
+    <button onclick="toggleModal('addMemberModal')">Add Member</button>
+    <button onclick="toggleModal('addBorrowModal')">Borrow Book</button>
+    <button onclick="toggleModal('addBorrowModal')">Return Book</button>
+</div>
 
                 <div class="activity">
                     <h3>Recent Activity</h3>
@@ -388,23 +394,25 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
                     </ul>
                 </div>
 
-                <div class="borrow-table">
-                    <h3>Current Borrowed Books</h3>
-                    <table>
-                        <thead>
-                            <tr><th>Member</th><th>Book</th><th>Due Date</th><th>Status</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr><td>John</td><td>Java Basics</td><td>2026-04-01</td><td class="gold-text">Borrowed</td></tr>
-                        </tbody>
-                    </table>
-                </div>
+<div class="borrow-table">
+    <h3>Current Borrowed Books</h3>
+    <table>
+        <thead>
+            <tr><th>Member</th><th>Book</th><th>Due Date</th><th>Status</th></tr>
+        </thead>
+        <tbody id="dashboardLoanTable">
+            <tr><td colspan="4" style="text-align:center;">Loading Archive...</td></tr>
+        </tbody>
+    </table>
+</div>
             </div>
 
             <div id="panel-books" class="content-panel" style="display: none;">
                 <div class="panel-header">
                     <h3>Library Archive</h3>
-                    <div class="search-box"><input type="text" placeholder="Search the archives..."></div>
+                    <div class="search-box">
+    <input type="text" id="bookSearch" onkeyup="searchBooks()" placeholder="Search the archives...">
+</div>
                 </div>
                 <div class="actions" style="margin-bottom: 20px;">
                     <button onclick="toggleModal('addBookModal')" style="width: 100%;">+ Add New Volume</button>
@@ -415,15 +423,35 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
                             <tr><th>ID</th><th>Title</th><th>ISBN</th><th>Year</th><th>Copies</th><th>Actions</th></tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td>001</td><td class="gold-text">Java Basics</td><td>123456789</td><td>2020</td><td>5</td>
-                                <td>
-                                    <div class="btn-group">
-                                        <button class="btn-small">Edit</button>
-                                        <button class="btn-small btn-danger">Delete</button>
-                                    </div>
-                                </td>
-                            </tr>
+<tbody>
+<?php
+if ($result_books->num_rows > 0) {
+    while ($row = $result_books->fetch_assoc()) {
+        echo "<tr>";
+        echo "<td>" . $row['book_id'] . "</td>"; 
+        echo "<td class='gold-text'>" . htmlspecialchars($row['title']) . "</td>";
+        echo "<td>" . $row['isbn'] . "</td>";
+        echo "<td>" . $row['publish_year'] . "</td>"; 
+        echo "<td>" . $row['copies'] . "</td>";
+        echo "<td>
+                <div class='btn-group'>
+                    <button class='btn-small' onclick=\"openEditModal(
+                        '{$row['book_id']}', 
+                        '" . addslashes($row['title']) . "', 
+                        '{$row['isbn']}', 
+                        '{$row['publish_year']}', 
+                        '{$row['copies']}'
+                    )\">Edit</button>
+                    <button class='btn-small btn-danger' onclick=\"if(confirm('Are you sure?')) window.location.href='delete_book.php?id=" . $row['book_id'] . "'\">Delete</button>
+                </div>
+              </td>";
+        echo "</tr>";
+    }
+} else {
+    echo "<tr><td colspan='6'>No books found</td></tr>";
+}
+?>
+</tbody>
                         </tbody>
                     </table>
                 </div>
@@ -432,7 +460,9 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
             <div id="panel-members" class="content-panel" style="display: none;">
                 <div class="panel-header">
                     <h3>Member Registry</h3>
-                    <div class="search-box"><input type="text" placeholder="Search the registry..."></div>
+                    <div class="search-box">
+    <input type="text" id="memberSearch" onkeyup="searchMembers()" placeholder="Search the registry...">
+</div>
                 </div>
                 <div class="actions" style="margin-bottom: 20px;">
                     <button onclick="toggleModal('addMemberModal')" style="width: 100%; padding: 15px;">+ Enroll New Member</button>
@@ -443,54 +473,92 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
                             <tr><th>ID</th><th>Name</th><th>Phone</th><th>Joined Date</th><th>Type</th><th>Actions</th></tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td>M-001</td><td class="gold-text">John Doe</td><td>09123456789</td><td>2026-01-01</td>
-                                <td><span class="badge badge-regular">Regular</span></td>
-                                <td>
-                                    <div class="btn-group">
-                                        <button class="btn-small">Edit</button>
-                                        <button class="btn-small btn-danger">Delete</button>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
+<?php
+if ($result_members && $result_members->num_rows > 0) {
+    while ($m_row = $result_members->fetch_assoc()) {
+        echo "<tr>";
+        echo "<td>" . $m_row['member_id'] . "</td>";
+        echo "<td class='gold-text'>" . htmlspecialchars($m_row['name']) . "</td>";
+        echo "<td>" . htmlspecialchars($m_row['phone']) . "</td>";
+        echo "<td>" . $m_row['membership_date'] . "</td>";
+        
+        echo "<td>";
+        if (!empty($m_row['type_name'])) {
+            echo "<span class='badge badge-regular'>" . htmlspecialchars($m_row['type_name']) . "</span>";
+        } else {
+            echo "<span class='badge' style='opacity: 0.5;'>Guest/None</span>";
+        }
+        echo "</td>";
+
+        echo "<td>
+                <div class='btn-group'>
+                    <button class='btn-small' onclick=\"openEditMemberModal(
+                        '{$m_row['member_id']}', 
+                        '" . addslashes($m_row['name']) . "', 
+                        '{$m_row['phone']}', 
+                        '" . addslashes($m_row['address']) . "',
+                        '{$m_row['membership_type_id']}'
+                    )\">Edit</button>
+                    <button class='btn-small btn-danger' onclick=\"if(confirm('Revoke membership?')) window.location.href='delete_member.php?id=" . $m_row['member_id'] . "'\">Delete</button>
+                </div>
+              </td>";
+        echo "</tr>";
+    }
+} else {
+    echo "<tr><td colspan='6'>No members registered.</td></tr>";
+}
+?>
                     </table>
                 </div>
             </div>
 
             <div id="panel-borrow" class="content-panel" style="display: none;">
                 <div class="panel-header"><h3>BORROWING & CIRCULATION</h3></div>
-                <div class="activity">
-                    <h3 style="font-size: 14px; margin-bottom: 15px;">LOG NEW TRANSACTION</h3>
-                    <form class="archive-form">
-                        <div class="form-row">
-                            <select class="archive-select" style="margin-bottom: 0;">
-                                <option disabled selected>Select Member</option>
-                                <option>John Doe (M-001)</option>
-                            </select>
-                            <span style="color: #ffd700; font-family: 'Cinzel'; font-size: 12px;">OR</span>
-                            <input type="text" placeholder="Guest Name (if not member)" style="margin-bottom: 0;">
-                        </div>
-                        <label style="font-size: 10px; color: #ffd700; letter-spacing: 1px; display: block; margin-bottom: 5px;">SELECT VOLUMES (Hold Ctrl/Cmd to select multiple)</label>
-                        <select class="archive-select" multiple>
-                            <option>The Whispering Oaks</option>
-                            <option>Java Basics</option>
-                            <option>Architecture of Dreams</option>
-                        </select>
-                        <div class="form-row" style="margin-top: 15px;">
-                            <div style="flex: 1;">
-                                <label style="font-size: 10px; color: #ffd700; display: block;">DUE DATE</label>
-                                <input type="date" style="margin-top: 5px; margin-bottom: 0;">
-                            </div>
-                            <button type="submit" style="flex: 1; height: 45px; background: #ffd700; color: #0a0502; align-self: flex-end;">BORROW</button>
-                        </div>
-                    </form>
-                </div>
+              <div class="activity">
+    <h3 style="font-size: 14px; margin-bottom: 15px;">LOG NEW TRANSACTION</h3>
+    <form id="borrowForm" class="archive-form" method="POST" action="process_borrow.php">
+        
+        <label style="font-size: 10px; color: #ffd700; letter-spacing: 1px;">PATRON NAME</label>
+<input id="memberInput" list="memberOptions" name="member_id" class="archive-select" placeholder="Type to search members...">
+        <datalist id="memberOptions">
+            <?php
+            $res_m = $conn->query("SELECT member_id, name FROM members ORDER BY name ASC");
+            while($m = $res_m->fetch_assoc()) {
+                // We put the ID in the value so the form sends the ID, but the user sees the Name
+                echo "<option value='{$m['member_id']}'>" . htmlspecialchars($m['name']) . "</option>";
+            }
+            ?>
+        </datalist>
 
+        <div style="text-align: center; margin-bottom: 15px;">
+            <span style="color: #ffd700; font-family: 'Cinzel'; font-size: 10px;">— OR GUEST —</span>
+        </div>
+        <input type="text" name="guest_name" placeholder="Enter Guest Name" style="margin-bottom: 15px;">
+
+<div style="position: relative;">
+    <label style="font-size: 10px; color: #ffd700; letter-spacing: 1px;">SELECT VOLUME</label>
+    <input type="text" id="bookSearch" class="archive-select" placeholder="Type title or ID..." autocomplete="off">
+    
+    <input type="hidden" name="book_id" id="submitted_book_id">
+    
+    <div id="searchResults" style="position: absolute; width: 100%; background: #1a1a1a; border: 1px solid #ffd700; display: none; z-index: 1000; max-height: 200px; overflow-y: auto;"></div>
+</div>
+
+        <div class="form-row" style="margin-top: 20px;">
+            <div style="flex: 1;">
+                <label style="font-size: 10px; color: #ffd700; display: block;">DUE DATE</label>
+                <input type="date" name="due_date" required style="margin-top: 5px; margin-bottom: 0;">
+            </div>
+            <button type="submit" style="flex: 1; height: 45px; background: #ffd700; color: #0a0502; align-self: flex-end; font-weight: bold;">BORROW</button>
+        </div>
+    </form>
+</div>
                 <div class="borrow-table">
                     <div class="panel-header" style="margin-bottom: 15px;">
                         <h3 style="margin-bottom: 0;">BORROWED BOOKS</h3>
-                        <div class="search-box"><input type="text" placeholder="Filter loans..." style="width: 200px;"></div>
+                        <div class="search-box">
+    <input type="text" id="borrowSearch" onkeyup="searchBorrows()" placeholder="Filter loans..." style="width: 200px;">
+</div>
                     </div>
                     <table>
                         <thead>
@@ -504,13 +572,9 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
                                 <th class="col-action">ACTION</th>
                             </tr>
                         </thead>
-                        <tbody>
-                            <tr>
-                                <td>1</td><td class="gold-text">John</td><td>Java Basics</td><td>2026-03-25</td><td>2026-04-01</td>
-                                <td><span class="badge badge-regular">Borrowed</span></td>
-                                <td><button class="btn-small">Return</button></td>
-                            </tr>
-                        </tbody>
+                        <tbody id="loanTableBody">
+    <tr><td colspan="7" style="text-align:center;">Loading Archive...</td></tr>
+</tbody>
                     </table>
                 </div>
             </div>
@@ -741,40 +805,121 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
         </div>
     </div>
 
-    <div id="addBookModal" class="modal">
-        <div class="modal-content">
-            <h3>Catalog New Volume</h3>
-            <form class="archive-form">
-                <input type="text" placeholder="Title">
-                <input type="text" placeholder="ISBN">
-                <div class="form-row"><input type="number" placeholder="Year"><input type="number" placeholder="Copies"></div>
-                <div class="form-actions">
-                    <button type="submit">Add to Collection</button>
-                    <button type="button" onclick="toggleModal('addBookModal')" class="btn-secondary">Cancel</button>
-                </div>
-            </form>
-        </div>
+   <div id="addBookModal" class="modal">
+    <div class="modal-content">
+        <h3>Catalog New Volume</h3>
+        <form class="archive-form" method="POST" action="add_book.php">
+            <input type="text" name="title" placeholder="Title" required>
+            <input type="text" name="isbn" placeholder="ISBN" required>
+            <div class="form-row">
+                <input type="number" name="year" placeholder="Year" required>
+                <input type="number" name="copies" placeholder="Copies" required>
+            </div>
+            <div class="form-actions">
+                <button type="submit">Add to Collection</button>
+                <button type="button" onclick="toggleModal('addBookModal')" class="btn-secondary">Cancel</button>
+            </div>
+        </form>
     </div>
+</div>
 
-    <div id="addMemberModal" class="modal">
-        <div class="modal-content">
-            <h3>New Membership Scroll</h3>
-            <form class="archive-form">
-                <input type="text" placeholder="Full Name">
-                <input type="text" placeholder="Phone">
-                <input type="date" title="Membership Date">
-                <input type="text" placeholder="Address">
-                <select class="archive-select">
-                    <option value="" disabled selected>Select Membership Type</option>
-                    <option>Regular</option><option>Student</option><option>Premium</option>
-                </select>
-                <div class="form-actions">
-                    <button type="submit">Sign Contract</button>
-                    <button type="button" onclick="toggleModal('addMemberModal')" class="btn-secondary">Cancel</button>
-                </div>
-            </form>
-        </div>
+<div id="editBookModal" class="modal">
+    <div class="modal-content">
+        <h3>Edit Volume Details</h3>
+        <form class="archive-form" method="POST" action="edit_book.php">
+            <input type="hidden" name="book_id" id="edit_book_id">
+            <input type="text" name="title" id="edit_title" placeholder="Title" required>
+            <input type="text" name="isbn" id="edit_isbn" placeholder="ISBN" required>
+            <div class="form-row">
+                <input type="number" name="year" id="edit_year" placeholder="Year" required>
+                <input type="number" name="copies" id="edit_copies" placeholder="Copies" required>
+            </div>
+            <div class="form-actions">
+                <button type="submit">Save Changes</button>
+                <button type="button" onclick="toggleModal('editBookModal')" class="btn-secondary">Cancel</button>
+            </div>
+        </form>
     </div>
+</div>
+
+<div id="addMemberModal" class="modal">
+    <div class="modal-content">
+        <h3>Register New Member</h3>
+        <form class="archive-form" method="POST" action="add_member.php">
+            <input type="text" name="name" placeholder="Full Name" required>
+            <input type="text" name="phone" placeholder="Phone Number" required>
+            <textarea name="address" placeholder="Residential Address" style="background: rgba(20, 10, 5, 0.8); color: #f5e6c8; border: 1px solid #c5a059; padding: 10px; margin-bottom: 15px; border-radius: 4px;"></textarea>
+            <div class="form-actions">
+                <button type="submit">Complete Registration</button>
+                <button type="button" onclick="toggleModal('addMemberModal')" class="btn-secondary">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="editMemberModal" class="modal">
+    <div class="modal-content">
+        <h3>Update Member Scroll</h3>
+        <form class="archive-form" method="POST" action="edit_member.php">
+            <input type="hidden" name="member_id">
+            <input type="text" name="name" placeholder="Full Name" required>
+            <input type="text" name="phone" placeholder="Phone" required>
+            <textarea name="address" placeholder="Address" style="background: rgba(20, 10, 5, 0.8); color: #f5e6c8; border: 1px solid #c5a059; padding: 10px; margin-bottom: 15px; border-radius: 4px; width: 100%;"></textarea>
+            <select name="membership_type_id" class="archive-select">
+                <option value="1">Student</option>
+                <option value="2">Regular</option>
+                <option value="3">Premium</option>
+            </select>
+            <div class="form-actions">
+                <button type="submit">Save Changes</button>
+                <button type="button" onclick="toggleModal('editMemberModal')" class="btn-secondary">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="addBorrowModal" class="modal">
+    <div class="modal-content" style="width: 500px;">
+        <h3>Log New Transaction</h3>
+        <form class="archive-form" method="POST" action="process_borrow.php">
+            <label style="font-size: 10px; color: #ffd700;">SELECT PATRON</label>
+            <select name="member_id" class="archive-select" required>
+                <option value="" disabled selected>-- Select Member --</option>
+                <?php
+                // Fetch members for the dropdown
+                $res_m = $conn->query("SELECT member_id, name FROM members ORDER BY name ASC");
+                while($m = $res_m->fetch_assoc()) {
+                    echo "<option value='{$m['member_id']}'>" . htmlspecialchars($m['name']) . "</option>";
+                }
+                ?>
+            </select>
+
+            <label style="font-size: 10px; color: #ffd700;">SELECT VOLUME</label>
+            <select name="book_id" class="archive-select" required>
+                <option value="" disabled selected>-- Select Book --</option>
+                <?php
+                // Only show books that actually have copies available
+                $res_b = $conn->query("SELECT book_id, title FROM books WHERE copies > 0 ORDER BY title ASC");
+                while($b = $res_b->fetch_assoc()) {
+                    echo "<option value='{$b['book_id']}'>" . htmlspecialchars($b['title']) . "</option>";
+                }
+                ?>
+            </select>
+
+            <div style="margin-bottom: 15px;">
+                <label style="font-size: 10px; color: #ffd700;">DUE DATE</label>
+                <input type="date" name="due_date" required style="margin-top: 5px;">
+            </div>
+
+            <div class="form-actions">
+                <button type="submit">Confirm Borrow</button>
+                <button type="button" onclick="toggleModal('addBorrowModal')" class="btn-secondary">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+
 
     <script>
         // Profile Dropdown logic
@@ -793,14 +938,63 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
         // Navigation logic
         const navItems = document.querySelectorAll('.nav-item');
         const panels = document.querySelectorAll('.content-panel');
-        navItems.forEach(item => {
-            item.addEventListener('click', () => {
-                navItems.forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-                panels.forEach(p => p.style.display = 'none');
-                document.getElementById(item.getAttribute('data-target')).style.display = 'block';
-            });
-        });
+        if (!navItems.length) console.warn('No nav items found for panel switching');
+        if (!panels.length) console.warn('No content panels found for panel switching');
+
+        const showPanel = (panelId) => {
+    panels.forEach(p => {
+        p.style.display = (p.id === panelId) ? 'block' : 'none';
+    });
+    navItems.forEach(i => i.classList.toggle('active', i.dataset.target === panelId));
+
+    if (panelId === 'panel-dashboard') {
+        loadDashboardTable();
+    }
+    // MOVED HERE: Whenever the borrow panel is shown, refresh the table
+    if (panelId === 'panel-borrow') {
+        loadBorrowTable();
+    }
+};
+
+navItems.forEach(item => {
+    item.addEventListener('click', () => {
+        const targetId = item.dataset.target;
+        
+        if (!targetId) return;
+
+        const targetPanel = document.getElementById(targetId);
+        if (!targetPanel) return;
+
+        showPanel(targetId);
+    });
+});
+
+// Initialization logic to fix the "starts on wrong panel" issue
+window.addEventListener('load', () => {
+    // Check if there is a # in the URL, otherwise default to dashboard
+    const hash = window.location.hash.substring(1);
+    const initialPanel = hash || 'panel-dashboard';
+    
+    showPanel(initialPanel);
+});
+
+// 3. ADD THIS: The function that actually fetches the data
+function loadBorrowTable() {
+    fetch('fetch_loans.php')
+        .then(response => response.text())
+        .then(data => {
+            const container = document.getElementById('loanTableBody');
+            if (container) {
+                container.innerHTML = data;
+            }
+        })
+        .catch(err => console.error("Error updating borrow UI:", err));
+}
+
+        // Ensure default initial panel
+        if (document.getElementById('panel-dashboard')) {
+            showPanel('panel-dashboard');
+        }
 
         // Modal Logic
         function toggleModal(id) {
@@ -810,6 +1004,202 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
         window.onclick = function(event) {
             if (event.target.className === 'modal') event.target.style.display = "none";
         }
+
+ window.addEventListener('load', () => {
+    const hash = window.location.hash; 
+
+    // If there is no hash, OR if the hash is #panel-borrow, force Dashboard
+    if (!hash || hash === '#panel-borrow') { 
+        showPanel('panel-dashboard');
+        
+        // This line removes the '#' from the URL so it doesn't get 'stuck' on refresh
+        history.replaceState(null, null, ' '); 
+    } else {
+        // Otherwise, respect the hash for other panels (like #panel-books)
+        const targetId = hash.substring(1);
+        const targetPanel = document.getElementById(targetId);
+        if (targetPanel) {
+            showPanel(targetId);
+        } else {
+            showPanel('panel-dashboard');
+        }
+    }
+});
+
+function openEditModal(id, title, isbn, year, copies) {
+    // Fill the modal inputs with existing data
+    document.getElementById('edit_book_id').value = id;
+    document.getElementById('edit_title').value = title;
+    document.getElementById('edit_isbn').value = isbn;
+    document.getElementById('edit_year').value = year;
+    document.getElementById('edit_copies').value = copies;
+    
+    // Show the modal
+    toggleModal('editBookModal');
+}
+
+function searchBooks() {
+    // Get the search input value and convert to lowercase
+    let input = document.getElementById('bookSearch');
+    let filter = input.value.toLowerCase();
+    let table = document.querySelector("#panel-books table");
+    let tr = table.getElementsByTagName("tr");
+
+    // Loop through all table rows (starting after the header)
+    for (let i = 1; i < tr.length; i++) {
+        let titleCell = tr[i].getElementsByTagName("td")[1]; // Title column
+        let isbnCell = tr[i].getElementsByTagName("td")[2];  // ISBN column
+        
+        if (titleCell || isbnCell) {
+            let titleText = titleCell.textContent || titleCell.innerText;
+            let isbnText = isbnCell.textContent || isbnCell.innerText;
+            
+            // Check if the search term exists in either the title or ISBN
+            if (titleText.toLowerCase().indexOf(filter) > -1 || 
+                isbnText.toLowerCase().indexOf(filter) > -1) {
+                tr[i].style.display = ""; // Show row
+            } else {
+                tr[i].style.display = "none"; // Hide row
+            }
+        }
+    }
+}
+
+function openEditMemberModal(id, name, phone, address, typeId) {
+    // Get the modal element
+    const modal = document.getElementById('editMemberModal');
+    
+    // Fill the hidden ID and visible input fields
+    modal.querySelector('input[name="member_id"]').value = id;
+    modal.querySelector('input[name="name"]').value = name;
+    modal.querySelector('input[name="phone"]').value = phone;
+    modal.querySelector('textarea[name="address"]').value = address;
+    modal.querySelector('select[name="membership_type_id"]').value = typeId;
+    
+    // Show the modal
+    modal.style.display = 'flex';
+}
+
+function searchMembers() {
+    let input = document.getElementById('memberSearch');
+    let filter = input.value.toLowerCase();
+    let table = document.querySelector("#panel-members table");
+    let tr = table.getElementsByTagName("tr");
+
+    // Loop through all table rows (skipping the header)
+    for (let i = 1; i < tr.length; i++) {
+        let nameCell = tr[i].getElementsByTagName("td")[1];  // Name column
+        let phoneCell = tr[i].getElementsByTagName("td")[2]; // Phone column
+        
+        if (nameCell || phoneCell) {
+            let nameText = nameCell.textContent || nameCell.innerText;
+            let phoneText = phoneCell.textContent || phoneCell.innerText;
+            
+            // Check if filter matches Name or Phone
+            if (nameText.toLowerCase().indexOf(filter) > -1 || 
+                phoneText.toLowerCase().indexOf(filter) > -1) {
+                tr[i].style.display = "";
+            } else {
+                tr[i].style.display = "none";
+            }
+        }
+    }
+}
+
+function loadDashboardTable() {
+    fetch('fetch_loans.php')
+        .then(response => response.text())
+        .then(data => {
+            const container = document.getElementById('dashboardLoanTable');
+            if (container) {
+                // This updates the dashboard WITHOUT touching the borrow panel
+                container.innerHTML = data;
+            }
+        })
+        .catch(err => console.error("Error updating dashboard:", err));
+}
+function searchBorrows() {
+    let input = document.getElementById('borrowSearch');
+    let filter = input.value.toLowerCase();
+    let table = document.getElementById("loanTableBody");
+    let tr = table.getElementsByTagName("tr");
+
+    for (let i = 0; i < tr.length; i++) {
+        // [1] Member/Guest column, [2] Book column, [5] Status column
+        let nameCell = tr[i].getElementsByTagName("td")[1];
+        let bookCell = tr[i].getElementsByTagName("td")[2];
+        let statusCell = tr[i].getElementsByTagName("td")[5];
+        
+        if (nameCell || bookCell || statusCell) {
+            let nameText = nameCell.textContent || nameCell.innerText;
+            let bookText = bookCell.textContent || bookCell.innerText;
+            let statusText = statusCell.textContent || statusCell.innerText;
+            
+            if (nameText.toLowerCase().indexOf(filter) > -1 || 
+                bookText.toLowerCase().indexOf(filter) > -1 ||
+                statusText.toLowerCase().indexOf(filter) > -1) {
+                tr[i].style.display = "";
+            } else {
+                tr[i].style.display = "none";
+            }
+        }
+    }
+}
+document.getElementById('borrowForm').addEventListener('submit', function(e) {
+    const memberId = document.getElementById('memberInput').value.trim();
+    const guestName = document.querySelector('input[name="guest_name"]').value.trim();
+
+    // If BOTH are empty, then we stop the form
+    if (!memberId && !guestName) {
+        e.preventDefault(); 
+        alert("Please provide either a Member ID or a Guest Name to proceed.");
+    }
+});
+
+const bookSearch = document.getElementById('bookSearch');
+const resultsDiv = document.getElementById('searchResults');
+const hiddenId = document.getElementById('submitted_book_id');
+
+bookSearch.addEventListener('input', function() {
+    const query = this.value;
+    if (query.length < 1) {
+        resultsDiv.style.display = 'none';
+        return;
+    }
+
+    fetch(`search_books.php?q=${encodeURIComponent(query)}`)
+        .then(response => response.json())
+        .then(data => {
+            resultsDiv.innerHTML = '';
+            if (data.length > 0) {
+                resultsDiv.style.display = 'block';
+                data.forEach(book => {
+                    const div = document.createElement('div');
+                    div.style.padding = '10px';
+                    div.style.cursor = 'pointer';
+                    div.style.borderBottom = '1px solid #333';
+                    div.innerHTML = `<span style="color:#ffd700;">#${book.book_id}</span> - ${book.title} <br><small>${book.author}</small>`;
+                    
+                    div.onclick = function() {
+                        bookSearch.value = book.title; // Show title to user
+                        hiddenId.value = book.book_id; // Set REAL ID for PHP
+                        resultsDiv.style.display = 'none';
+                    };
+                    resultsDiv.appendChild(div);
+                });
+            } else {
+                resultsDiv.style.display = 'none';
+            }
+        });
+});
+
+// Prevent typing "garbage" - if they don't click a result, the ID remains empty
+document.getElementById('borrowForm').addEventListener('submit', function(e) {
+    if (!hiddenId.value) {
+        e.preventDefault();
+        alert("Please select a book from the suggested list!");
+    }
+});
     </script>
 </body>
 </html>
