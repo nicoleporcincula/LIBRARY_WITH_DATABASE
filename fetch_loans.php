@@ -23,19 +23,23 @@ if ($result && $result->num_rows > 0) {
         $statusClass = (strtolower($row['status']) == 'borrowed') ? 'status-borrowed' : 'status-returned';
         
         echo "<tr>";
-        // Use the correct ID from the screenshot
         echo "<td>" . $row['borrow_detail_id'] . "</td>";
         echo "<td class='gold-text'>" . htmlspecialchars($row['patron_name']) . "</td>";
         echo "<td>" . htmlspecialchars($row['title']) . "</td>";
         echo "<td>" . $row['borrow_date'] . "</td>";
         echo "<td>" . $row['due_date'] . "</td>";
         echo "<td><span class='badge " . $statusClass . "'>" . $row['status'] . "</span></td>";
-        echo "<td>
-                <button class='btn-small' onclick='returnBook(" . $row['borrow_detail_id'] . ", " . $row['book_id'] . ")'>Return</button>
-              </td>";
+        
+        // --- CHANGE STARTING HERE ---
+echo "<td>";
+if (strtolower($row['status']) === 'borrowed') {
+    echo "<button class='btn-small' onclick='returnBook(" . $row['borrow_detail_id'] . ", " . $row['book_id'] . ")'>Return</button>";
+} else {
+    echo "<span style='color: #888; font-style: italic; font-size: 11px;'>Archived</span>";
+}
+echo "</td>";
+        
         echo "</tr>";
     }
-} else {
-    echo "<tr><td colspan='7' style='text-align:center;'>No active borrowings found.</td></tr>";
 }
 ?>

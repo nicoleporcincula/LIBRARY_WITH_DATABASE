@@ -31,7 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $log_stmt->bind_param("i", $user['user_id']);
             $log_stmt->execute();
 
-            header("Location: home.html"); // must be PHP to access session
+            header("Location: home.php"); // must be PHP to access session
             exit;
 
         } else {

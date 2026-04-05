@@ -2,23 +2,70 @@
 session_start();
 include 'db_connect.php'; 
 
-//Redirect to login if user not logged in
+
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.html");
     exit;
 }
 
-// Get all members
-$sql_members = "SELECT m.*, mt.type_name 
-                FROM members m 
-                LEFT JOIN membership_types mt ON m.membership_type_id = mt.membership_type_id";
-$result_members = $conn->query($sql_members);
-// Get all books
-$sql_books = "SELECT * FROM books";
-$result_books = $conn->query($sql_books);
+// Get logged-in user's info
+$user_id = $_SESSION['user_id'];
+$stmt = $conn->prepare("SELECT username, full_name, password, role FROM users WHERE user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$user = $result->fetch_assoc();
+$user_name = htmlspecialchars($user['full_name']); // for greeting
 
-//Get user's full name safely
-$user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
+// Fetch circulation rules (default_days, daily_fine)
+$rulesQuery = $conn->query("SELECT default_days, daily_fine FROM settings LIMIT 1");
+$rules = $rulesQuery ? $rulesQuery->fetch_assoc() : ['default_days'=>7, 'daily_fine'=>10];
+
+// Fetch membership tiers
+$result_tiers = $conn->query("SELECT * FROM membership_types ORDER BY membership_type_id ASC");
+
+$result_members = $conn->query("
+    SELECT m.*, mt.type_name 
+    FROM members m
+    LEFT JOIN membership_types mt ON m.membership_type_id = mt.membership_type_id
+    ORDER BY m.member_id ASC
+");
+
+// Dashboard counts
+$total_books = $conn->query("SELECT SUM(copies) AS total FROM books")->fetch_assoc()['total'] ?? 0;
+$total_members = $conn->query("SELECT COUNT(*) AS total FROM members")->fetch_assoc()['total'] ?? 0;
+
+// Borrowed & Overdue counts
+$total_borrowed = $conn->query("SELECT COUNT(*) AS total FROM borrow_details WHERE status='Borrowed'")->fetch_assoc()['total'] ?? 0;
+$total_overdue = $conn->query("
+    SELECT COUNT(*) AS total
+    FROM borrow_details bd
+    JOIN borrow b ON bd.borrow_id = b.borrow_id
+    WHERE bd.status='Borrowed' AND b.due_date < CURDATE()
+")->fetch_assoc()['total'] ?? 0;
+
+// Fetch all books
+$result_books = $conn->query("SELECT * FROM books ORDER BY book_id ASC");
+
+// Fetch current borrowed books (with borrower names from members or guests)
+$sql_borrowed = "
+SELECT 
+    b.borrow_id,
+    COALESCE(m.name, g.name) AS borrower_name,
+    bk.title AS book_title,
+    b.due_date,
+    CASE 
+        WHEN b.due_date < CURDATE() THEN 'Overdue'
+        ELSE 'Borrowed'
+    END AS status
+FROM borrow b
+LEFT JOIN members m ON b.member_id = m.member_id
+LEFT JOIN guests g ON b.guest_id = g.guest_id
+LEFT JOIN borrow_details bd ON b.borrow_id = bd.borrow_id
+LEFT JOIN books bk ON bd.book_id = bk.book_id
+ORDER BY b.borrow_date DESC
+";
+$result_borrowed = $conn->query($sql_borrowed);
 ?>
 
 <!DOCTYPE html>
@@ -197,7 +244,7 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
 
         table { width: 100%; border-collapse: collapse; table-layout: fixed; }
         th { text-align: left; padding: 15px; color: rgba(255, 215, 0, 0.8); border-bottom: 2px solid rgba(255, 215, 0, 0.2); font-size: 12px; text-transform: uppercase; }
-        td { padding: 18px 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        td { padding: 18px 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 14px; word-wrap: break-word; white-space: normal; }
         
         h3 { font-family: 'Cinzel', serif; color: #ffd700; margin-bottom: 25px; font-size: 18px; letter-spacing: 1px; }
         .gold-text { color: #ffd700; font-weight: 600; }
@@ -289,9 +336,12 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
 
 /* --- Settings Specific Styles --- */
 .settings-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
     gap: 25px;
+}
+
+.left-col, .right-col {
+    flex: 1;
 }
 
 .settings-section {
@@ -342,6 +392,30 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
     color: rgba(245, 230, 200, 0.6);
     margin-bottom: 8px;
 }
+/* --- Customized Scrollbar for Volumes --- */
+
+/* 1. Target the scrollable container we created */
+#volumeList::-webkit-scrollbar {
+    width: 6px; /* Width of the entire scrollbar */
+}
+
+/* 2. Target the "Track" (the path the thumb slides on) */
+#volumeList::-webkit-scrollbar-track {
+    background: rgba(15, 8, 5, 0.6); /* Dark background matching panels */
+    border-radius: 10px;
+}
+
+/* 3. Target the "Thumb" (the draggable part) */
+#volumeList::-webkit-scrollbar-thumb {
+    background: #ffd700; /* Gold color matching theme */
+    border-radius: 10px;
+    border: 1px solid rgba(15, 8, 5, 0.9); /* Small border to give it dimension */
+}
+
+/* 4. Target the Thumb on hover */
+#volumeList::-webkit-scrollbar-thumb:hover {
+    background: #c5a059; /* Slightly darker gold on hover */
+}
    </style>
 </head>
 
@@ -371,28 +445,19 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
             <div class="welcome">Welcome, <?php echo htmlspecialchars($user_name); ?>!</div>
 
             <div id="panel-dashboard" class="content-panel">
-                <div class="cards">
-                    <div class="card"><p class="card-label">Total Books</p><span class="card-value">0</span></div>
-                    <div class="card"><p class="card-label">Members</p><span class="card-value">0</span></div>
-                    <div class="card"><p class="card-label">Borrowed</p><span class="card-value">0</span></div>
-                    <div class="card"><p class="card-label">Overdue</p><span class="card-value">0</span></div>
-                </div>
-
-<div class="actions">
-    <button onclick="toggleModal('addBookModal')">Add Book</button>
-    <button onclick="toggleModal('addMemberModal')">Add Member</button>
-    <button onclick="toggleModal('addBorrowModal')">Borrow Book</button>
-    <button onclick="toggleModal('addBorrowModal')">Return Book</button>
+        <div class="cards">
+    <div class="card"><p class="card-label">Total Books</p><span class="card-value"><?php echo $total_books; ?></span></div>
+    <div class="card"><p class="card-label">Members</p><span class="card-value"><?php echo $total_members; ?></span></div>
+    <div class="card"><p class="card-label">Borrowed</p><span class="card-value"><?php echo $total_borrowed; ?></span></div>
+    <div class="card"><p class="card-label">Overdue</p><span class="card-value"><?php echo $total_overdue; ?></span></div>
 </div>
 
-                <div class="activity">
-                    <h3>Recent Activity</h3>
-                    <ul>
-                        <li>User logged in</li>
-                        <li>Book added: "The Whispering Oaks"</li>
-                        <li>Borrow recorded for member: John</li>
-                    </ul>
-                </div>
+<div class="actions">
+<button onclick="showPanel('panel-books')">Add Book</button>
+<button onclick="showPanel('panel-members')">Add Member</button>
+<button onclick="showPanel('panel-borrow')">Borrow Book</button>
+<button onclick="showPanel('panel-borrow')">Return Book</button>
+</div>
 
 <div class="borrow-table">
     <h3>Current Borrowed Books</h3>
@@ -400,9 +465,22 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
         <thead>
             <tr><th>Member</th><th>Book</th><th>Due Date</th><th>Status</th></tr>
         </thead>
-        <tbody id="dashboardLoanTable">
-            <tr><td colspan="4" style="text-align:center;">Loading Archive...</td></tr>
-        </tbody>
+       <tbody id="dashboardLoanTable">
+<?php
+if ($result_borrowed->num_rows > 0) {
+    while ($row = $result_borrowed->fetch_assoc()) {
+        echo "<tr>
+                <td>" . htmlspecialchars($row['borrower_name']) . "</td>
+                <td class='gold-text'>" . htmlspecialchars($row['book_title']) . "</td>
+                <td>" . $row['due_date'] . "</td>
+                <td>" . $row['status'] . "</td>
+              </tr>";
+    }
+} else {
+    echo "<tr><td colspan='4' style='text-align:center;'>No borrowed books found</td></tr>";
+}
+?>
+</tbody>
     </table>
 </div>
             </div>
@@ -423,7 +501,6 @@ $user_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'User';
                             <tr><th>ID</th><th>Title</th><th>ISBN</th><th>Year</th><th>Copies</th><th>Actions</th></tr>
                         </thead>
                         <tbody>
-<tbody>
 <?php
 if ($result_books->num_rows > 0) {
     while ($row = $result_books->fetch_assoc()) {
@@ -451,7 +528,6 @@ if ($result_books->num_rows > 0) {
     echo "<tr><td colspan='6'>No books found</td></tr>";
 }
 ?>
-</tbody>
                         </tbody>
                     </table>
                 </div>
@@ -508,6 +584,7 @@ if ($result_members && $result_members->num_rows > 0) {
     echo "<tr><td colspan='6'>No members registered.</td></tr>";
 }
 ?>
+                        </tbody>
                     </table>
                 </div>
             </div>
@@ -536,8 +613,29 @@ if ($result_members && $result_members->num_rows > 0) {
         <input type="text" name="guest_name" placeholder="Enter Guest Name" style="margin-bottom: 15px;">
 
 <div style="position: relative;">
-    <label style="font-size: 10px; color: #ffd700; letter-spacing: 1px;">SELECT VOLUME</label>
-    <input type="text" id="bookSearch" class="archive-select" placeholder="Type title or ID..." autocomplete="off">
+    <label style="font-size: 10px; color: #ffd700; letter-spacing: 1px;">SELECT VOLUMES</label>
+<div class="volume-selector-container" style="border: 1px solid #c5a059; background: rgba(20, 10, 5, 0.8); border-radius: 4px; padding: 10px;">
+    <input type="text" id="volumeSearch" placeholder="Search volumes..." style="margin-bottom: 10px; font-size: 12px; height: 30px;">
+    
+    <div id="volumeList" style="max-height: 150px; overflow-y: auto; padding-right: 5px;">
+        <?php
+        $res_b = $conn->query("SELECT book_id, title, copies FROM books WHERE copies > 0 ORDER BY title ASC");
+        while($b = $res_b->fetch_assoc()) {
+            echo "
+            <div class='book-item' data-title='".strtolower(htmlspecialchars($b['title']))."' style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding-bottom: 5px; border-bottom: 1px solid rgba(197, 160, 89, 0.2);'>
+                <div style='flex: 1;'>
+                    <span style='font-size: 12px; color: #f5e6c8;'>".htmlspecialchars($b['title'])."</span>
+                    <br><small style='color: #ffd700; font-size: 9px;'>Available: {$b['copies']}</small>
+                </div>
+                <div style='display: flex; align-items: center; gap: 5px;'>
+                    <input type='checkbox' name='selected_books[]' value='{$b['book_id']}' class='book-check'>
+                    <input type='number' name='qty_{$b['book_id']}' value='1' min='1' max='{$b['copies']}' style='width: 40px; height: 25px; font-size: 12px; text-align: center; padding: 0;'>
+                </div>
+            </div>";
+        }
+        ?>
+    </div>
+</div>
     
     <input type="hidden" name="book_id" id="submitted_book_id">
     
@@ -583,14 +681,14 @@ if ($result_members && $result_members->num_rows > 0) {
     <div class="panel-header">
         <h3>💰 Fines & Penalties</h3>
         <div class="search-box">
-            <input type="text" placeholder="Search member or book...">
+           <input type="text" id="fineSearchInput" onkeyup="loadFinesTable()" placeholder="Search member or book...">
         </div>
     </div>
 
     <div class="actions" style="margin-bottom: 20px;">
-        <button class="btn-secondary active-filter">All Records</button>
-        <button class="btn-secondary">Unpaid Only</button>
-        <button class="btn-secondary">Settled Fines</button>
+   <button onclick="filterFines('all')">ALL RECORDS</button>
+<button onclick="filterFines('unpaid')">UNPAID ONLY</button>
+<button onclick="filterFines('paid')">SETTLED FINES</button>
     </div>
 
     <div class="borrow-table">
@@ -641,23 +739,33 @@ if ($result_members && $result_members->num_rows > 0) {
         </div>
         
         <div class="report-controls">
-            <span class="date-label">FROM</span>
-            <input type="date" value="2026-03-01">
+<label>FROM</label>
+<input type="date" id="reportFrom" value="2026-03-01">
+
+<label>TO</label>
+<input type="date" id="reportTo" value="2026-04-04">
             
-            <span class="date-label">TO</span>
-            <input type="date" value="2026-03-31">
-            
-            <button class="btn-small" style="margin-left: 10px; height: 38px; padding: 0 20px;">
-                GENERATE REPORT
-            </button>
+<button id="generateReportBtn" class="btn-gold" onclick="loadReports()">GENERATE REPORT</button>
         </div>
     </div>
 
     <div class="cards">
-        <div class="card"><p class="card-label">Total Borrows</p><span class="card-value">120</span></div>
-        <div class="card"><p class="card-label">Returned</p><span class="card-value">100</span></div>
-        <div class="card"><p class="card-label">Overdue</p><span class="card-value">20</span></div>
-        <div class="card"><p class="card-label">Total Fines</p><span class="card-value" style="font-size: 38px;">₱500</span></div>
+<div class="card">
+    <h3>TOTAL BORROWS</h3>
+    <h1 id="total-borrows-val">0</h1> 
+</div>
+<div class="card">
+    <h3>RETURNED</h3>
+    <h1 id="returned-val">0</h1>
+</div>
+<div class="card">
+    <h3>OVERDUE</h3>
+    <h1 id="overdue-val">0</h1>
+</div>
+<div class="card">
+    <h3>TOTAL FINES</h3>
+    <h1 id="total-fines-val">₱0.00</h1>
+</div>
     </div>
 
     <div class="borrow-table">
@@ -665,7 +773,7 @@ if ($result_members && $result_members->num_rows > 0) {
             <span style="font-size: 18px;">📊</span>
             <h3 style="margin-bottom: 0; font-size: 16px;">MOST REQUESTED VOLUMES</h3>
         </div>
-        <table>
+        <table id="most-requested-table">
             <thead>
                 <tr>
                     <th>BOOK TITLE</th>
@@ -688,41 +796,38 @@ if ($result_members && $result_members->num_rows > 0) {
         </table>
     </div>
 
-    <div style="display: flex; gap: 20px;">
-        <div class="borrow-table" style="flex: 1;">
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
-                <span style="font-size: 16px;">⚠️</span>
-                <h3 style="margin-bottom: 0; font-size: 14px;">OVERDUE ALERTS</h3>
-            </div>
-            <table>
-                <thead>
-                    <tr><th>MEMBER</th><th>DUE DATE</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td class="gold-text">John Doe</td><td style="color: #ff4d4d;">2026-03-20</td></tr>
-                    <tr><td class="gold-text">Nicole P.</td><td style="color: #ff4d4d;">2026-03-25</td></tr>
-                </tbody>
-            </table>
-        </div>
-
-        <div class="borrow-table" style="flex: 1;">
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
-                <span style="font-size: 16px;">💰</span>
-                <h3 style="margin-bottom: 0; font-size: 14px;">PENDING FINES</h3>
-            </div>
-            <table>
-                <thead>
-                    <tr><th>MEMBER</th><th>AMOUNT</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td class="gold-text">John Doe</td><td>₱50.00</td></tr>
-                    <tr><td class="gold-text">Maria S.</td><td>₱125.00</td></tr>
-                </tbody>
-            </table>
-        </div>
+    <div class="borrow-table" style="flex: 1;">
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
+        <span style="font-size: 16px;">⚠️</span>
+        <h3 style="margin-bottom: 0; font-size: 14px;">OVERDUE ALERTS</h3>
     </div>
+    <table>
+        <thead>
+            <tr><th>MEMBER</th><th>DUE DATE</th></tr>
+        </thead>
+     <tbody id="overdue-alerts-container">
+    <tr><td colspan="2" style="text-align:center; opacity:0.5;">Searching archives...</td></tr>
+</tbody>
+    </table>
 </div>
-            <div id="panel-settings" class="content-panel" style="display: none;">
+
+<div class="borrow-table" style="flex: 1;">
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
+        <span style="font-size: 16px;">💰</span>
+        <h3 style="margin-bottom: 0; font-size: 14px;">PENDING FINES</h3>
+    </div>
+    <table>
+        <thead>
+            <tr><th>MEMBER</th><th>AMOUNT</th></tr>
+        </thead>
+<tbody id="pending-fines-container">
+    <tr><td colspan="2" style="text-align:center; opacity:0.5;">Calculating fines...</td></tr>
+</tbody>
+    </table>
+</div>
+</div>
+            
+<div id="panel-settings" class="content-panel" style="display: none;">
     <div class="panel-header">
         <h3>⚙️ SYSTEM CONFIGURATION</h3>
     </div>
@@ -731,64 +836,68 @@ if ($result_members && $result_members->num_rows > 0) {
         <div class="left-col">
             <div class="settings-section" style="margin-bottom: 25px;">
                 <h4>👤 ACCOUNT PRIVILEGES</h4>
-                <form class="settings-form">
-                    <label>Administrative Username</label>
-                    <input type="text" value="Admin_Nicole">
-                    
-                    <label>Email Address</label>
-                    <input type="email" value="nicole.porcincula@uc.edu.ph">
-                    
-                    <label>Update Secret Cipher (Password)</label>
-                    <input type="password" placeholder="••••••••">
-                    
-                    <button type="submit" class="btn-small" style="width: 100%;">Update Credentials</button>
-                </form>
+               <form class="settings-form" id="accountForm">
+    <label>Administrative Username</label>
+    <input type="text" id="adminUsername" value="<?php echo htmlspecialchars($user['full_name']); ?>">
+    
+    <label>Email Address</label>
+    <input type="email" id="adminEmail" value="<?php echo htmlspecialchars($user['username']); ?>">
+    
+    <label>Update Secret Cipher (Password)</label>
+    <input type="password" id="adminPassword" placeholder="••••••••">
+    
+    <button type="submit" class="btn-small" style="width: 100%;">Update Credentials</button>
+</form>
+<p id="updateMsg" style="color: green; font-size: 12px;"></p>
             </div>
 
             <div class="settings-section">
                 <h4>📜 CIRCULATION RULES</h4>
-                <form class="settings-form">
-                    <div style="display: flex; gap: 15px;">
-                        <div style="flex: 1;">
-                            <label>Default Borrow Days</label>
-                            <input type="number" value="7">
-                        </div>
-                        <div style="flex: 1;">
-                            <label>Daily Fine (₱)</label>
-                            <input type="number" value="10">
-                        </div>
-                    </div>
-                    <button type="submit" class="btn-small" style="width: 100%;">Save Rules</button>
-                </form>
+               <form class="settings-form" id="rulesForm">
+    <div style="display: flex; gap: 15px;">
+        <div style="flex: 1;">
+            <label>Default Borrow Days</label>
+            <input type="number" id="defaultDays" value="<?php echo htmlspecialchars($rules['default_days']); ?>">
+        </div>
+        <div style="flex: 1;">
+            <label>Daily Fine (₱)</label>
+            <input type="number" id="dailyFine" value="<?php echo htmlspecialchars($rules['daily_fine']); ?>">
+        </div>
+    </div>
+    <button type="submit" class="btn-small" style="width: 100%;">Save Rules</button>
+</form>
+<p id="rulesMsg" style="color: green; font-size: 12px; display: none;"></p>
             </div>
         </div>
 
         <div class="right-col">
-            <div class="settings-section" style="margin-bottom: 25px;">
-                <h4>🎖️ MEMBERSHIP TIERS</h4>
-                <table style="font-size: 12px;">
-                    <thead>
-                        <tr>
-                            <th>TYPE</th>
-                            <th>FEE</th>
-                            <th>ACTION</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td class="gold-text">Student</td>
-                            <td>₱50.00</td>
-                            <td><button class="btn-small" style="padding: 4px 10px;">Edit</button></td>
-                        </tr>
-                        <tr>
-                            <td class="gold-text">Regular</td>
-                            <td>₱100.00</td>
-                            <td><button class="btn-small" style="padding: 4px 10px;">Edit</button></td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
+            <div class="settings-section">
+    <h4>🎖️ MEMBERSHIP TIERS</h4>
+    <table style="font-size: 12px;">
+        <thead>
+            <tr>
+                <th>TYPE</th>
+                <th>BORROW LIMIT</th>
+                <th>DURATION (DAYS)</th>
+                <th>ACTION</th>
+            </tr>
+        </thead>
+        <tbody id="membershipTbody">
+            <?php
+            $sql = "SELECT * FROM membership_types ORDER BY membership_type_id ASC";
+            $result = $conn->query($sql);
+            while($tier = $result->fetch_assoc()){
+                echo "<tr data-id='{$tier['membership_type_id']}'>
+                        <td class='gold-text'>{$tier['type_name']}</td>
+                        <td>{$tier['borrow_limit']}</td>
+                        <td>{$tier['duration_days']}</td>
+                        <td><button class='btn-small editTier' style='padding: 4px 10px;'>Edit</button></td>
+                    </tr>";
+            }
+            ?>
+        </tbody>
+    </table>
+</div>
             <div class="settings-section">
                 <h4>🏛️ ARCHIVE METADATA</h4>
                 <div style="padding: 10px 0;">
@@ -921,162 +1030,114 @@ if ($result_members && $result_members->num_rows > 0) {
 
 
 
-    <script>
-        // Profile Dropdown logic
-        const profile = document.getElementById('profile');
-        const dropdown = document.getElementById('profileDropdown');
-        profile.addEventListener('click', (e) => {
-            e.stopPropagation();
-            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-        });
-        document.addEventListener('click', () => { dropdown.style.display = 'none'; });
+  <script>
+const profile = document.getElementById('profile');
+const dropdown = document.getElementById('profileDropdown');
 
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            window.location.href = 'logout.php';
-        });
+profile.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+});
 
-        // Navigation logic
-        const navItems = document.querySelectorAll('.nav-item');
-        const panels = document.querySelectorAll('.content-panel');
-        if (!navItems.length) console.warn('No nav items found for panel switching');
-        if (!panels.length) console.warn('No content panels found for panel switching');
+document.addEventListener('click', () => { dropdown.style.display = 'none'; });
 
-        const showPanel = (panelId) => {
-    panels.forEach(p => {
-        p.style.display = (p.id === panelId) ? 'block' : 'none';
-    });
+document.getElementById('logoutBtn').addEventListener('click', () => {
+    window.location.href = 'logout.php';
+});
+
+const navItems = document.querySelectorAll('.nav-item');
+const panels = document.querySelectorAll('.content-panel');
+
+const showPanel = (panelId) => {
+    panels.forEach(p => p.style.display = (p.id === panelId) ? 'block' : 'none');
     navItems.forEach(i => i.classList.toggle('active', i.dataset.target === panelId));
 
-    if (panelId === 'panel-dashboard') {
-        loadDashboardTable();
-    }
-    // MOVED HERE: Whenever the borrow panel is shown, refresh the table
-    if (panelId === 'panel-borrow') {
-        loadBorrowTable();
-    }
+    if (panelId === 'panel-dashboard') loadDashboardTable();
+    if (panelId === 'panel-borrow') loadBorrowTable();
+    if (panelId === 'panel-fines') loadFinesTable();
+    if (panelId === 'panel-reports') loadReports();
 };
 
 navItems.forEach(item => {
     item.addEventListener('click', () => {
         const targetId = item.dataset.target;
-        
         if (!targetId) return;
-
         const targetPanel = document.getElementById(targetId);
         if (!targetPanel) return;
-
         showPanel(targetId);
     });
 });
 
-// Initialization logic to fix the "starts on wrong panel" issue
+if (document.getElementById('panel-dashboard')) {
+    showPanel('panel-dashboard');
+}
+
+function toggleModal(id) {
+    const modal = document.getElementById(id);
+    modal.style.display = (modal.style.display === 'flex') ? 'none' : 'flex';
+}
+
+window.onclick = function(event) {
+    if (event.target.className === 'modal') event.target.style.display = "none";
+};
+
 window.addEventListener('load', () => {
-    // Check if there is a # in the URL, otherwise default to dashboard
     const hash = window.location.hash.substring(1);
-    const initialPanel = hash || 'panel-dashboard';
-    
-    showPanel(initialPanel);
+
+    if (hash && document.getElementById(hash)) {
+        showPanel(hash);
+    } else {
+        showPanel('panel-dashboard');
+    }
 });
 
-// 3. ADD THIS: The function that actually fetches the data
 function loadBorrowTable() {
     fetch('fetch_loans.php')
         .then(response => response.text())
         .then(data => {
             const container = document.getElementById('loanTableBody');
-            if (container) {
-                container.innerHTML = data;
-            }
+            if (container) container.innerHTML = data;
         })
-        .catch(err => console.error("Error updating borrow UI:", err));
+        .catch(err => console.error(err));
 }
 
-        // Ensure default initial panel
-        if (document.getElementById('panel-dashboard')) {
-            showPanel('panel-dashboard');
-        }
-
-        // Modal Logic
-        function toggleModal(id) {
-            const modal = document.getElementById(id);
-            modal.style.display = (modal.style.display === 'flex') ? 'none' : 'flex';
-        }
-        window.onclick = function(event) {
-            if (event.target.className === 'modal') event.target.style.display = "none";
-        }
-
- window.addEventListener('load', () => {
-    const hash = window.location.hash; 
-
-    // If there is no hash, OR if the hash is #panel-borrow, force Dashboard
-    if (!hash || hash === '#panel-borrow') { 
-        showPanel('panel-dashboard');
-        
-        // This line removes the '#' from the URL so it doesn't get 'stuck' on refresh
-        history.replaceState(null, null, ' '); 
-    } else {
-        // Otherwise, respect the hash for other panels (like #panel-books)
-        const targetId = hash.substring(1);
-        const targetPanel = document.getElementById(targetId);
-        if (targetPanel) {
-            showPanel(targetId);
-        } else {
-            showPanel('panel-dashboard');
-        }
-    }
-});
-
 function openEditModal(id, title, isbn, year, copies) {
-    // Fill the modal inputs with existing data
     document.getElementById('edit_book_id').value = id;
     document.getElementById('edit_title').value = title;
     document.getElementById('edit_isbn').value = isbn;
     document.getElementById('edit_year').value = year;
     document.getElementById('edit_copies').value = copies;
-    
-    // Show the modal
     toggleModal('editBookModal');
 }
 
 function searchBooks() {
-    // Get the search input value and convert to lowercase
     let input = document.getElementById('bookSearch');
     let filter = input.value.toLowerCase();
     let table = document.querySelector("#panel-books table");
     let tr = table.getElementsByTagName("tr");
 
-    // Loop through all table rows (starting after the header)
     for (let i = 1; i < tr.length; i++) {
-        let titleCell = tr[i].getElementsByTagName("td")[1]; // Title column
-        let isbnCell = tr[i].getElementsByTagName("td")[2];  // ISBN column
-        
+        let titleCell = tr[i].getElementsByTagName("td")[1];
+        let isbnCell = tr[i].getElementsByTagName("td")[2];
+
         if (titleCell || isbnCell) {
             let titleText = titleCell.textContent || titleCell.innerText;
             let isbnText = isbnCell.textContent || isbnCell.innerText;
-            
-            // Check if the search term exists in either the title or ISBN
-            if (titleText.toLowerCase().indexOf(filter) > -1 || 
-                isbnText.toLowerCase().indexOf(filter) > -1) {
-                tr[i].style.display = ""; // Show row
-            } else {
-                tr[i].style.display = "none"; // Hide row
-            }
+
+            tr[i].style.display =
+                (titleText.toLowerCase().includes(filter) ||
+                 isbnText.toLowerCase().includes(filter)) ? "" : "none";
         }
     }
 }
 
 function openEditMemberModal(id, name, phone, address, typeId) {
-    // Get the modal element
     const modal = document.getElementById('editMemberModal');
-    
-    // Fill the hidden ID and visible input fields
     modal.querySelector('input[name="member_id"]').value = id;
     modal.querySelector('input[name="name"]').value = name;
     modal.querySelector('input[name="phone"]').value = phone;
     modal.querySelector('textarea[name="address"]').value = address;
     modal.querySelector('select[name="membership_type_id"]').value = typeId;
-    
-    // Show the modal
     modal.style.display = 'flex';
 }
 
@@ -1086,22 +1147,17 @@ function searchMembers() {
     let table = document.querySelector("#panel-members table");
     let tr = table.getElementsByTagName("tr");
 
-    // Loop through all table rows (skipping the header)
     for (let i = 1; i < tr.length; i++) {
-        let nameCell = tr[i].getElementsByTagName("td")[1];  // Name column
-        let phoneCell = tr[i].getElementsByTagName("td")[2]; // Phone column
-        
+        let nameCell = tr[i].getElementsByTagName("td")[1];
+        let phoneCell = tr[i].getElementsByTagName("td")[2];
+
         if (nameCell || phoneCell) {
             let nameText = nameCell.textContent || nameCell.innerText;
             let phoneText = phoneCell.textContent || phoneCell.innerText;
-            
-            // Check if filter matches Name or Phone
-            if (nameText.toLowerCase().indexOf(filter) > -1 || 
-                phoneText.toLowerCase().indexOf(filter) > -1) {
-                tr[i].style.display = "";
-            } else {
-                tr[i].style.display = "none";
-            }
+
+            tr[i].style.display =
+                (nameText.toLowerCase().includes(filter) ||
+                 phoneText.toLowerCase().includes(filter)) ? "" : "none";
         }
     }
 }
@@ -1111,48 +1167,51 @@ function loadDashboardTable() {
         .then(response => response.text())
         .then(data => {
             const container = document.getElementById('dashboardLoanTable');
-            if (container) {
-                // This updates the dashboard WITHOUT touching the borrow panel
-                container.innerHTML = data;
-            }
+            if (container) container.innerHTML = data;
         })
-        .catch(err => console.error("Error updating dashboard:", err));
+        .catch(err => console.error(err));
 }
+
 function searchBorrows() {
     let input = document.getElementById('borrowSearch');
     let filter = input.value.toLowerCase();
-    let table = document.getElementById("loanTableBody");
-    let tr = table.getElementsByTagName("tr");
+    let tr = document.getElementById("loanTableBody").getElementsByTagName("tr");
 
     for (let i = 0; i < tr.length; i++) {
-        // [1] Member/Guest column, [2] Book column, [5] Status column
-        let nameCell = tr[i].getElementsByTagName("td")[1];
-        let bookCell = tr[i].getElementsByTagName("td")[2];
-        let statusCell = tr[i].getElementsByTagName("td")[5];
-        
-        if (nameCell || bookCell || statusCell) {
-            let nameText = nameCell.textContent || nameCell.innerText;
-            let bookText = bookCell.textContent || bookCell.innerText;
-            let statusText = statusCell.textContent || statusCell.innerText;
-            
-            if (nameText.toLowerCase().indexOf(filter) > -1 || 
-                bookText.toLowerCase().indexOf(filter) > -1 ||
-                statusText.toLowerCase().indexOf(filter) > -1) {
-                tr[i].style.display = "";
-            } else {
-                tr[i].style.display = "none";
-            }
-        }
+        let name = tr[i].children[1]?.innerText.toLowerCase() || "";
+        let book = tr[i].children[2]?.innerText.toLowerCase() || "";
+        let status = tr[i].children[5]?.innerText.toLowerCase() || "";
+
+        tr[i].style.display =
+            (name.includes(filter) || book.includes(filter) || status.includes(filter)) ? "" : "none";
     }
 }
-document.getElementById('borrowForm').addEventListener('submit', function(e) {
-    const memberId = document.getElementById('memberInput').value.trim();
-    const guestName = document.querySelector('input[name="guest_name"]').value.trim();
 
-    // If BOTH are empty, then we stop the form
+const memberInput = document.getElementById('memberInput');
+const guestInput = document.querySelector('input[name="guest_name"]');
+
+memberInput.addEventListener('input', () => {
+    guestInput.disabled = memberInput.value.trim() !== "";
+});
+
+guestInput.addEventListener('input', () => {
+    memberInput.disabled = guestInput.value.trim() !== "";
+});
+
+document.getElementById('borrowForm').addEventListener('submit', function(e) {
+    const memberId = memberInput.value.trim();
+    const guestName = guestInput.value.trim();
+    const selectedBooks = document.querySelectorAll('.book-check:checked');
+
     if (!memberId && !guestName) {
-        e.preventDefault(); 
-        alert("Please provide either a Member ID or a Guest Name to proceed.");
+        e.preventDefault();
+        alert("Provide Member ID or Guest Name");
+        return;
+    }
+
+    if (selectedBooks.length === 0) {
+        e.preventDefault();
+        alert("Select at least one book");
     }
 });
 
@@ -1168,38 +1227,292 @@ bookSearch.addEventListener('input', function() {
     }
 
     fetch(`search_books.php?q=${encodeURIComponent(query)}`)
-        .then(response => response.json())
+        .then(res => res.json())
         .then(data => {
             resultsDiv.innerHTML = '';
-            if (data.length > 0) {
-                resultsDiv.style.display = 'block';
-                data.forEach(book => {
-                    const div = document.createElement('div');
-                    div.style.padding = '10px';
-                    div.style.cursor = 'pointer';
-                    div.style.borderBottom = '1px solid #333';
-                    div.innerHTML = `<span style="color:#ffd700;">#${book.book_id}</span> - ${book.title} <br><small>${book.author}</small>`;
-                    
-                    div.onclick = function() {
-                        bookSearch.value = book.title; // Show title to user
-                        hiddenId.value = book.book_id; // Set REAL ID for PHP
-                        resultsDiv.style.display = 'none';
-                    };
-                    resultsDiv.appendChild(div);
-                });
-            } else {
-                resultsDiv.style.display = 'none';
-            }
+            resultsDiv.style.display = data.length ? 'block' : 'none';
+
+            data.forEach(book => {
+                const div = document.createElement('div');
+                div.innerHTML = `#${book.book_id} - ${book.title}`;
+                div.onclick = () => {
+                    bookSearch.value = book.title;
+                    hiddenId.value = book.book_id;
+                    resultsDiv.style.display = 'none';
+                };
+                resultsDiv.appendChild(div);
+            });
         });
 });
 
-// Prevent typing "garbage" - if they don't click a result, the ID remains empty
-document.getElementById('borrowForm').addEventListener('submit', function(e) {
-    if (!hiddenId.value) {
-        e.preventDefault();
-        alert("Please select a book from the suggested list!");
+document.getElementById('volumeSearch').addEventListener('input', function() {
+    const filter = this.value.toLowerCase();
+    document.querySelectorAll('.book-item').forEach(item => {
+        item.style.display = item.getAttribute('data-title').includes(filter) ? 'flex' : 'none';
+    });
+});
+
+function returnBook(detailId, bookId) {
+    if (!confirm("Return this book?")) return;
+
+    fetch(`return_book.php?id=${detailId}&book_id=${bookId}`)
+        .then(res => res.text())
+        .then(data => {
+            if (data.trim() === "Success") {
+                loadBorrowTable();
+                loadDashboardTable();
+            } else {
+                alert(data);
+            }
+        });
+}
+
+let currentFineStatus = 'all';
+
+function loadFinesTable() {
+    const searchVal = document.getElementById('fineSearchInput')?.value || '';
+
+    fetch(`fetch_fines.php?status=${currentFineStatus}&search=${encodeURIComponent(searchVal)}`)
+        .then(res => res.text())
+        .then(data => {
+            const container = document.querySelector("#panel-fines tbody");
+            if (container) container.innerHTML = data;
+        });
+}
+
+function filterFines(status) {
+    currentFineStatus = status;
+    loadFinesTable();
+}
+
+function payFine(fineId) {
+    if (!confirm("Mark as paid?")) return;
+
+    fetch(`pay_fine.php?id=${fineId}`)
+        .then(res => res.text())
+        .then(data => {
+            if (data.trim() === "Success") loadFinesTable();
+        });
+}
+
+document.getElementById('fineSearchInput')?.addEventListener('input', loadFinesTable);
+
+document.querySelector('[data-target="panel-fines"]').addEventListener('click', loadFinesTable);
+
+function loadReports() {
+    const fromDate = document.getElementById('reportFrom').value;
+    const toDate = document.getElementById('reportTo').value;
+
+    if(!fromDate || !toDate) {
+        alert("Please select both dates first!");
+        return;
+    }
+
+    localStorage.setItem('reportFrom', fromDate);
+    localStorage.setItem('reportTo', toDate);
+
+    fetch(`fetch_reports.php?from=${fromDate}&to=${toDate}`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('total-borrows-val').innerText = data.total_borrows;
+            document.getElementById('returned-val').innerText = data.returned;
+            document.getElementById('overdue-val').innerText = data.overdue;
+            document.getElementById('total-fines-val').innerText = '₱' + data.total_fines;
+
+            let rows = "";
+            data.popular_books.forEach(book => {
+                const badge = book.copies > 0 ? 'badge-success' : 'badge-danger';
+                const status = book.copies > 0 ? 'AVAILABLE' : 'OUT OF STOCK';
+                rows += `<tr>
+                    <td>${book.title}</td>
+                    <td>${book.borrow_count}</td>
+                    <td><span class="badge ${badge}">${status}</span></td>
+                </tr>`;
+            });
+
+            document.querySelector('#most-requested-table tbody').innerHTML = rows;
+        });
+
+    fetch('fetch_dashboard_alerts.php')
+        .then(res => res.json())
+        .then(data => {
+            let overdueHTML = "";
+            data.overdue.forEach(item => {
+                overdueHTML += `<tr>
+                    <td class="gold-text">${item.patron}</td>
+                    <td style="color: #ff4d4d;">${item.due_date}</td>
+                </tr>`;
+            });
+
+            document.getElementById('overdue-alerts-container').innerHTML = overdueHTML;
+
+            let finesHTML = "";
+            data.fines.forEach(item => {
+                finesHTML += `<tr>
+                    <td class="gold-text">${item.patron}</td>
+                    <td class="gold-text">₱${item.amount}</td>
+                </tr>`;
+            });
+
+            document.getElementById('pending-fines-container').innerHTML = finesHTML;
+        });
+}
+
+function loadDashboardData() {
+    fetch('fetch_dashboard_alerts.php')
+        .then(res => res.json())
+        .then(data => {
+            if (data.stats) {
+                document.getElementById('stat-borrows').innerText = data.stats.total_borrows;
+                document.getElementById('stat-returned').innerText = data.stats.returned;
+                document.getElementById('stat-overdue').innerText = data.stats.overdue_count;
+                document.getElementById('stat-fines').innerText = '₱' + data.stats.total_fines;
+            }
+        });
+}
+window.addEventListener('load', () => {
+    const savedFrom = localStorage.getItem('reportFrom');
+    const savedTo = localStorage.getItem('reportTo');
+
+    if (savedFrom && savedTo) {
+        document.getElementById('reportFrom').value = savedFrom;
+        document.getElementById('reportTo').value = savedTo;
+
+        loadReports(); 
     }
 });
-    </script>
+
+document.getElementById('accountForm').addEventListener('submit', function(e){
+    e.preventDefault();
+
+    const formData = new FormData();
+    formData.append('full_name', document.getElementById('adminUsername').value);
+    formData.append('username', document.getElementById('adminEmail').value);
+    formData.append('password', document.getElementById('adminPassword').value);
+
+    fetch('update_account.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(res => res.text())
+    .then(data => {
+        const msgEl = document.getElementById('updateMsg');
+        msgEl.innerText = data;
+        msgEl.style.display = 'block';
+        document.getElementById('adminPassword').value = ''; // clear password field
+
+        // Remove the message after 3 seconds
+        setTimeout(() => {
+            msgEl.innerText = '';
+            msgEl.style.display = 'none';
+        }, 3000);
+    })
+    .catch(err => console.error('Error updating account:', err));
+});
+
+document.getElementById('rulesForm').addEventListener('submit', function(e){
+    e.preventDefault();
+
+    const formData = new FormData();
+    formData.append('default_days', document.getElementById('defaultDays').value);
+    formData.append('daily_fine', document.getElementById('dailyFine').value);
+
+    fetch('update_rules.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(res => res.text())
+    .then(data => {
+        const msgEl = document.getElementById('rulesMsg');
+        msgEl.innerText = data;
+        msgEl.style.display = 'block';
+
+        // Hide the message after 3 seconds
+        setTimeout(() => {
+            msgEl.innerText = '';
+            msgEl.style.display = 'none';
+        }, 3000);
+    })
+    .catch(err => console.error('Error updating rules:', err));
+});
+
+document.addEventListener('DOMContentLoaded', function(){
+    document.querySelectorAll('.editTier').forEach(btn => {
+        btn.addEventListener('click', function(e){
+            e.preventDefault(); 
+
+            const row = btn.closest('tr');
+            const id = row.dataset.id;
+
+            if(btn.innerText === 'Save'){
+                const newBorrowLimit = row.querySelector('.inputBorrow').value;
+                const newDuration = row.querySelector('.inputDuration').value;
+
+                const formData = new FormData();
+                formData.append('membership_type_id', id);
+                formData.append('borrow_limit', newBorrowLimit);
+                formData.append('duration_days', newDuration);
+
+ fetch('update_membership.php', {
+    method: 'POST',
+    body: formData
+})
+.then(res => res.text())
+.then(msg => {
+    alert(msg);
+    // update table cells with new values
+    row.children[1].innerText = newBorrowLimit;
+    row.children[2].innerText = newDuration;
+    btn.innerText = 'Edit';
+});
+
+            } else { // Switch to edit mode
+                row.children[1].innerHTML = `<input type="number" class="inputBorrow" value="${row.children[1].innerText}" style="width:60px;">`;
+                row.children[2].innerHTML = `<input type="number" class="inputDuration" value="${row.children[2].innerText}" style="width:60px;">`;
+                btn.innerText = 'Save';
+            }
+        });
+    });
+});
+document.querySelectorAll('.editTier').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const row = btn.closest('tr');
+        const typeName = row.children[0].innerText;
+
+        if(btn.innerText === 'Edit') {
+            // Replace cells with inputs
+            row.children[1].innerHTML = `<input type="number" value="${row.children[1].innerText}" style="width:60px">`;
+            row.children[2].innerHTML = `<input type="number" value="${row.children[2].innerText}" style="width:60px">`;
+            btn.innerText = 'Save';
+        } else {
+            // Collect new values
+            const borrowLimit = row.children[1].querySelector('input').value;
+            const durationDays = row.children[2].querySelector('input').value;
+
+            const formData = new FormData();
+            formData.append('membership_type_id', row.dataset.id);
+            formData.append('borrow_limit', borrowLimit);
+            formData.append('duration_days', durationDays);
+
+            // Send to PHP
+            fetch('update_membership.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.text())
+            .then(msg => {
+                alert(msg); // show success/error
+                // Update table cells
+                row.children[1].innerText = borrowLimit;
+                row.children[2].innerText = durationDays;
+                btn.innerText = 'Edit';
+            })
+            .catch(err => console.error(err));
+        }
+    });
+});
+
+document.addEventListener('DOMContentLoaded', loadDashboardData);
+</script>
 </body>
 </html>
