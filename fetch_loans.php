@@ -12,8 +12,7 @@ $sql = "SELECT bd.borrow_detail_id,
         JOIN borrow br ON bd.borrow_id = br.borrow_id
         JOIN books b ON bd.book_id = b.book_id
         LEFT JOIN members m ON br.member_id = m.member_id
-        LEFT JOIN GUESTS g ON br.guest_id = g.guest_id
-        -- CHANGE THIS LINE BELOW:
+        LEFT JOIN guests g ON br.guest_id = g.guest_id
         ORDER BY bd.borrow_detail_id DESC";
 
 $result = $conn->query($sql);
@@ -29,16 +28,13 @@ if ($result && $result->num_rows > 0) {
         echo "<td>" . $row['borrow_date'] . "</td>";
         echo "<td>" . $row['due_date'] . "</td>";
         echo "<td><span class='badge " . $statusClass . "'>" . $row['status'] . "</span></td>";
-        
-        // --- CHANGE STARTING HERE ---
-echo "<td>";
-if (strtolower($row['status']) === 'borrowed') {
-    echo "<button class='btn-small' onclick='returnBook(" . $row['borrow_detail_id'] . ", " . $row['book_id'] . ")'>Return</button>";
-} else {
-    echo "<span style='color: #888; font-style: italic; font-size: 11px;'>Archived</span>";
-}
-echo "</td>";
-        
+        echo "<td>";
+        if (strtolower($row['status']) === 'borrowed') {
+            echo "<button class='btn-small' onclick='returnBook(" . $row['borrow_detail_id'] . ", " . $row['book_id'] . ")'>Return</button>";
+        } else {
+            echo "<span style='color: #888; font-style: italic; font-size: 11px;'>Archived</span>";
+        }
+        echo "</td>";
         echo "</tr>";
     }
 }
